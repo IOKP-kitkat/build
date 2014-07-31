@@ -15,11 +15,7 @@ Invoke ". build/envsetup.sh" from your shell to add the following functions to y
 - gcd:      cd's to a git project in the build tree.
 - godir:    Go to the directory containing a file.
 - mka:      Builds using SCHED_BATCH on all processors
-- mbot:     Builds for all devices using the psuedo buildbot
 - mkapush:  Same as mka with the addition of adb pushing to the device.
-- pstest:   cherry pick a patch from the AOKP gerrit instance.
-- pspush:   push commit to AOKP gerrit instance.
-- taco:     Builds for a single device using the pseudo buildbot
 - reposync: Parallel repo sync using ionice and SCHED_BATCH
 - addaosp:  Add git remote for the AOSP repository
 - sdkgen:   Create and add a custom sdk platform to your sdk directory from this source tree
@@ -67,12 +63,12 @@ function check_product()
         return
     fi
 
-    if (echo -n $1 | grep -q -e "^aokp_") ; then
-       AOKP_PRODUCT=$(echo -n $1 | sed -e 's/^aokp_//g')
+    if (echo -n $1 | grep -q -e "^iokp_") ; then
+       IOKP_PRODUCT=$(echo -n $1 | sed -e 's/^iokp_//g')
     else
-       AOKP_PRODUCT=
+       IOKP_PRODUCT=
     fi
-      export AOKP_PRODUCT
+      export IOKP_PRODUCT
 
     CALLED_FROM_SETUP=true BUILD_SYSTEM=build/core \
         TARGET_PRODUCT=$1 \
@@ -454,7 +450,7 @@ function print_lunch_menu()
     echo
     echo "You're building on" $uname
     echo
-    if [ "z${AOKP_DEVICES_ONLY}" != "z" ]; then
+    if [ "z${IOKP_DEVICES_ONLY}" != "z" ]; then
        echo "Breakfast menu... pick a combo:"
     else
        echo "Lunch menu... pick a combo:"
@@ -468,7 +464,7 @@ function print_lunch_menu()
         i=$(($i+1))
     done
 
-    if [ "z${AOKP_DEVICES_ONLY}" != "z" ]; then
+    if [ "z${IOKP_DEVICES_ONLY}" != "z" ]; then
        echo "... and don't forget the bacon!"
     fi
 
@@ -490,10 +486,10 @@ function brunch()
 function breakfast()
 {
     target=$1
-    AOKP_DEVICES_ONLY="true"
+    IOKP_DEVICES_ONLY="true"
     unset LUNCH_MENU_CHOICES
     add_lunch_combo full-eng
-    for f in `/bin/ls vendor/aokp/vendorsetup.sh 2> /dev/null`
+    for f in `/bin/ls vendor/iokp/vendorsetup.sh 2> /dev/null`
         do
             echo "including $f"
             . $f
@@ -510,7 +506,7 @@ function breakfast()
             lunch $target
         else
             # This is probably just the AOKP model name
-            lunch aokp_$target-userdebug
+            lunch iokp_$target-userdebug
         fi
     fi
     return $?
@@ -1467,12 +1463,6 @@ function mka() {
     esac
 }
 
-function mbot() {
-    unset LUNCH_MENU_CHOICES
-    croot
-    ./vendor/aokp/bot/deploy.sh
-}
-
 function mkapush() {
     # There's got to be a better way to do this stupid shit.
     case `uname -s` in
@@ -1525,107 +1515,6 @@ function mkapush() {
     esac
 }
 
-function pstest() {
-    if [ -z "$1" ] || [ "$1" = '--help' ]
-    then
-        echo "pstest"
-        echo "to use: pstest PATCH_ID/PATCH_SET"
-        echo "example: pstest 5555/5"
-        exit 0
-    fi
-
-    gerrit=gerrit.aokp.co
-    project=`git config --get remote.aokp.projectname`
-    patch="$1"
-    submission=`echo $patch | cut -f1 -d "/" | tail -c 3`
-
-    if [[ "$patch" != */* ]]
-    then
-        # User did not specify revision - pull latest
-        output=$( git ls-remote http://$gerrit/$project | grep /changes/$submission/$patch )
-        refchanges=$( echo "$output" | awk '{print $2}' )
-        latest=0
-
-        echo "$refchanges" | {
-            while read line; do
-                patchNum=${line##*/*/*/*/}
-                if [ $patchNum -gt $latest ]; then
-                    latest=$patchNum
-                fi
-            done
-            git fetch http://$gerrit/$project refs/changes/$submission/$patch/$latest && git cherry-pick FETCH_HEAD
-        }
-    else
-        git fetch http://$gerrit/$project refs/changes/$submission/$patch && git cherry-pick FETCH_HEAD
-    fi
-}
-
-function  pspush_host() {
-    echo ""
-    echo "Host aokp_gerrit"
-    echo "  Hostname gerrit.aokp.co"
-    echo "  Port 29418"
-    echo "  User $1"
-
-}
-
-function pspush_error() {
-    echo "pspush requires ~/.ssh/config setup containing the following info:"
-    pspush_host "[sshusername]"
-}
-
-function pspush_host_create() {
-    echo "Please enter sshusername registered with gerrit.aokp.co."
-    read sshusername
-    pspush_host $sshusername  >> ~/.ssh/config
-}
-
-function pspush() {
-    local project
-    project=`git config --get remote.aokp.projectname`
-    revision=`repo info . | grep "Current revision" | awk {'print $3'} | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g"`
-    if [ -z "$1" ] || [ "$1" = '--help' ]; then
-        echo "pspush"
-        echo "to use:  pspush \$destination"
-        echo "where \$destination: for=review; drafts=draft; heads=push through review to github (you probably can't)."
-        echo "example: 'pspush for'"
-        echo "will execute 'git push ssh://\$sshusername@gerrit.aokp.co:29418/$project HEAD:refs/[for][drafts][heads]/$revision'"
-    else
-        check_ssh_config="`grep -A 1 'gerrit$' ~/.ssh/config`"
-        check_ssh_config_2=`echo "$check_ssh_config" | while read line; do grep gerrit.aokp.co; done`
-        if [ -n "$check_ssh_config" ]; then
-            if [ -n "$check_ssh_config_2" ]; then
-                git push aokp_gerrit:$project HEAD:refs/$1/$revision
-            fi
-        elif [ -z "$check_ssh_config_2" ]; then
-            echo "Host entry doesn't exist, create now? (pick 1 or 2)"
-            select yn in "Yes" "No"; do
-                case $yn in
-                    Yes ) pspush_host_create
-                          echo "host entry created, please run again to push"
-                          break;;
-                    No ) pspush_error; break;;
-                esac
-            done
-        else
-            pspush_error
-        fi
-    fi
-}
-
-function taco() {
-    for sauce in "$@"
-    do
-        breakfast $sauce
-        if [ $? -eq 0 ]; then
-            croot
-            ./vendor/aokp/bot/build_device.sh aokp_$sauce-userdebug $sauce
-        else
-            echo "No such item in brunch menu. Try 'breakfast'"
-        fi
-    done
-}
-
 function addaosp() {
     git remote rm aosp >/dev/null 2>&1
     if [ ! -d .git ]; then
@@ -1650,14 +1539,14 @@ function sdkgen() {
 function reposync() {
     case `uname -s` in
         Darwin)
-            if [[ $AOKP_REPOSYNC_QUIET = true ]]; then
+            if [[ $IOKP_REPOSYNC_QUIET = true ]]; then
                 repo sync -j 4 "$@" | awk '!/Fetching\ project\ /'
             else
                 repo sync -j 4 "$@"
             fi
             ;;
         *)
-            if [[ $AOKP_REPOSYNC_QUIET = true ]]; then
+            if [[ $IOKP_REPOSYNC_QUIET = true ]]; then
                 schedtool -B -n 1 -e ionice -n 1 repo sync -j 4 "$@" | awk '!/Fetching\ project\ /'
             else
                 schedtool -B -n 1 -e ionice -n 1 repo sync -j 4 "$@"
